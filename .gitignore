@@ -26,3 +26,5 @@ poetry.lock
 # Other system-specific files
 .DS_Store
 Thumbs.db
+documentation_content.json
+relevant_docs.json
