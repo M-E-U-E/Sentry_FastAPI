@@ -1,0 +1,28 @@
+# Python bytecode files
+*.pyc
+*.pyo
+__pycache__/
+
+# Virtual environment folder (change 'venv' to your specific env folder name)
+venv/
+env/
+.venv/
+
+# Uvicorn logs
+*.log
+
+# IDE and editor folders
+.vscode/
+.idea/
+
+# Environment variables or sensitive data (e.g., .env files)
+.env
+
+# Python package manager files (if using pipenv or poetry, include their folders as well)
+Pipfile
+Pipfile.lock
+poetry.lock
+
+# Other system-specific files
+.DS_Store
+Thumbs.db
