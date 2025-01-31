@@ -33,7 +33,12 @@ def fetch_markdown_files(repo_url: str, folder_path="") -> Dict[str, str]:
     docs_content = {}
     current_repo_url = f"{repo_url}/contents/{folder_path}" if folder_path else f"{repo_url}/contents"
     
-    response = requests.get(current_repo_url)
+    headers = {}
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+    
+    response = requests.get(current_repo_url, headers=headers)
 
     if response.status_code == 403:
         reset_time = response.headers.get('X-RateLimit-Reset')
@@ -53,7 +58,7 @@ def fetch_markdown_files(repo_url: str, folder_path="") -> Dict[str, str]:
             file_name = file_info['name']
             file_url = file_info['download_url']
             
-            file_response = requests.get(file_url)
+            file_response = requests.get(file_url, headers=headers)
             if file_response.status_code == 200:
                 docs_content[file_name] = file_response.text
             else:
