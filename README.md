@@ -41,7 +41,16 @@ touch .env
 Add the following content to `.env`:
 ```
 GEMINI_API_KEY=your_gemini_api_key
+
 GITHUB_REPO_BASE=https://api.github.com/repos/username/repo
+GITHUB_TOKEN=token
+
+PINECONE_API_KEY=apikey
+PINECONE_ENVIRONMENT==  # Replace with your environment
+PINECONE_INDEX_NAME== # Replace with your desired index name
+PINECONE_ENDPOINT=
+
+CREWAI_DISABLE_TELEMETRY=true
 ```
 
 #### .gitignore file
