@@ -392,7 +392,7 @@ class CrewManager:
                 tools=[],
                 verbose=True,
                 memory=True,
-                llm="gemini/gemini-1.5-flash-latest"
+                llm="gemini/gemini-2.0-flash"
             ),
             'analyzer': Agent(
                 role="Content Analyzer",
@@ -401,7 +401,7 @@ class CrewManager:
                 tools=[],
                 verbose=True,
                 memory=True,
-                llm="gemini/gemini-1.5-pro-latest"
+                llm="gemini/gemini-2.0-flash"
             ),
             'assistant': Agent(
                 role="Documentation Guide",
@@ -409,7 +409,7 @@ class CrewManager:
                 backstory="A helpful AI that presents technical documentation in an easy-to-understand way.",
                 verbose=True,
                 memory=True,
-                llm="gemini/gemini-1.5-pro-latest"
+                llm="gemini/gemini-2.0-flash"
             )
         }
 
