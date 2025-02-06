@@ -4,10 +4,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 import aiohttp
-import requests
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field, HttpUrl, validator
 from sentence_transformers import SentenceTransformer
@@ -27,7 +24,6 @@ MAX_RETRIES = 3
 BATCH_SIZE = 100
 
 class ConfigModel(BaseModel):
-    """Pydantic model for configuration validation"""
     gemini_api_key: str
     github_repo_base: HttpUrl
     pinecone_api_key: str
@@ -38,7 +34,6 @@ class ConfigModel(BaseModel):
     max_workers: int = Field(default=4, ge=1, le=10)
 
 class Config:
-    """Configuration management class with validation"""
     def __init__(self):
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         self.github_repo_base = os.getenv("GITHUB_REPO_BASE")
@@ -50,7 +45,6 @@ class Config:
         self.max_workers = int(os.getenv("MAX_WORKERS", "4"))
         self._validate_config()
         
-        # Validate using Pydantic model
         self.config_model = ConfigModel(
             gemini_api_key=self.gemini_api_key,
             github_repo_base=self.github_repo_base,
@@ -63,7 +57,6 @@ class Config:
         )
 
     def _validate_config(self):
-        """Validate that all required environment variables are set"""
         required_vars = {
             "GEMINI_API_KEY": self.gemini_api_key,
             "GITHUB_REPO_BASE": self.github_repo_base,
@@ -74,21 +67,11 @@ class Config:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 class DocumentSection(BaseModel):
-    """Validation model for document sections"""
     content: str
     doc_name: str
     section_index: int
 
-    @validator('content')
-    def content_not_empty(cls, v):
-        if not v.strip():
-            raise ValueError("Content cannot be empty")
-        return v.strip()
-
 class DocumentationManager:
-    """
-    Enhanced documentation manager with parallel processing and validation.
-    """
     def __init__(self, config: Config):
         self.config = config
         self.embedder = SentenceTransformer('paraphrase-mpnet-base-v2')
@@ -97,7 +80,6 @@ class DocumentationManager:
         self._load_vector_ids()
 
     def _init_pinecone(self) -> None:
-        """Initialize Pinecone with retry logic"""
         for attempt in range(MAX_RETRIES):
             try:
                 self.pc = Pinecone(
@@ -127,7 +109,6 @@ class DocumentationManager:
                 asyncio.sleep(1)
 
     def _load_vector_ids(self) -> None:
-        """Load persisted vector IDs with error handling"""
         try:
             if os.path.exists(VECTOR_IDS_FILE):
                 with open(VECTOR_IDS_FILE, "r", encoding="utf-8") as f:
@@ -135,14 +116,11 @@ class DocumentationManager:
                 logger.info(f"Loaded {len(self.pinecone_ids)} vector IDs")
             else:
                 self.pinecone_ids = []
-        except json.JSONDecodeError as e:
+        except Exception as e:
             logger.error(f"Error loading vector IDs: {str(e)}")
             self.pinecone_ids = []
 
     async def fetch_markdown_files(self, folder_path: str = "") -> Dict[str, str]:
-        """
-        Asynchronously fetch Markdown files using aiohttp
-        """
         async def fetch_file(session: aiohttp.ClientSession, url: str, filename: str) -> tuple[str, str]:
             async with session.get(url) as response:
                 response.raise_for_status()
@@ -189,26 +167,7 @@ class DocumentationManager:
                     detail=str(e)
                 )
 
-    def _create_document_section(self, doc_name: str, section: str, index: int) -> Optional[DocumentSection]:
-        """Create and validate a document section with better content cleaning"""
-        # Clean the section content more thoroughly
-        cleaned_content = ' '.join(section.split())  # Remove excessive whitespace
-        
-        if not cleaned_content:  # Skip if content is empty after cleaning
-            return None
-            
-        try:
-            return DocumentSection(
-                content=cleaned_content,
-                doc_name=doc_name,
-                section_index=index
-            )
-        except ValueError as e:
-            logger.debug(f"Skipping invalid section in {doc_name} at index {index}: {str(e)}")
-            return None
-
     def _embed_section(self, section: DocumentSection) -> dict:
-        """Create embedding for a document section"""
         embedding = self.embedder.encode(section.content)
         return {
             'id': f"{section.doc_name}-{section.section_index}",
@@ -222,7 +181,6 @@ class DocumentationManager:
         }
 
     def _upsert_batch(self, vectors: List[dict]) -> None:
-        """Upsert a batch of vectors with retry logic"""
         for attempt in range(MAX_RETRIES):
             try:
                 self.index.upsert(vectors=vectors)
@@ -235,125 +193,57 @@ class DocumentationManager:
                 asyncio.sleep(1)
 
     def process_documentation(self, docs_content: Dict[str, str]) -> None:
-        """
-        Process documentation with improved content splitting and validation
-        """
         try:
             self.last_processed_timestamp = datetime.now()
             self.pinecone_ids = []
-            sections_to_process = []
+            vectors_to_upsert = []
 
-            # Improved content splitting with better section handling
             for doc_name, content in docs_content.items():
-                # Split content more intelligently
-                doc_sections = [
-                    section for section in content.split('\n\n')
-                    if section.strip()  # Pre-filter empty sections
-                ]
-                
-                meaningful_sections = []
-                current_section = []
-                
-                for section in doc_sections:
-                    cleaned_section = section.strip()
-                    if cleaned_section:
-                        current_section.append(cleaned_section)
-                        # If section is substantial enough, add it
-                        if len(' '.join(current_section)) >= 50:  # Minimum content length
-                            combined_section = ' '.join(current_section)
-                            if doc_section := self._create_document_section(
-                                doc_name, 
-                                combined_section, 
-                                len(meaningful_sections)
-                            ):
-                                meaningful_sections.append(doc_section)
-                                current_section = []
-                
-                # Add any remaining content
-                if current_section:
-                    combined_section = ' '.join(current_section)
-                    if doc_section := self._create_document_section(
-                        doc_name, 
-                        combined_section, 
-                        len(meaningful_sections)
-                    ):
-                        meaningful_sections.append(doc_section)
-                
-                sections_to_process.extend(meaningful_sections)
+                # Store complete document content
+                doc_section = DocumentSection(
+                    content=content,
+                    doc_name=doc_name,
+                    section_index=0
+                )
 
-            # Process sections in parallel
-            total_sections = len(sections_to_process)
-            logger.info(f"Processing {total_sections} meaningful sections...")
+                vector = self._embed_section(doc_section)
+                vectors_to_upsert.append(vector)
+                self.pinecone_ids.append(vector['id'])
 
-            if not sections_to_process:
-                logger.warning("No valid sections found to process")
-                return
-
-            # Process sections in parallel with progress tracking
-            with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
-                future_to_section = {
-                    executor.submit(self._embed_section, section): section 
-                    for section in sections_to_process
-                }
-
-                vectors_to_upsert = []
-                completed = 0
-
-                for future in as_completed(future_to_section):
-                    try:
-                        vector = future.result()
-                        vectors_to_upsert.append(vector)
-                        self.pinecone_ids.append(vector['id'])
-
-                        if len(vectors_to_upsert) >= BATCH_SIZE:
-                            self._upsert_batch(vectors_to_upsert)
-                            vectors_to_upsert = []
-
-                        completed += 1
-                        if completed % 10 == 0:  # Log progress every 10 sections
-                            logger.info(f"Processed {completed}/{total_sections} sections")
-
-                    except Exception as e:
-                        section = future_to_section[future]
-                        logger.error(f"Error processing section {section.section_index} "
-                                f"of {section.doc_name}: {str(e)}")
-
-                # Upsert any remaining vectors
-                if vectors_to_upsert:
+                if len(vectors_to_upsert) >= BATCH_SIZE:
                     self._upsert_batch(vectors_to_upsert)
+                    vectors_to_upsert = []
 
-            # Persist vector IDs
+            if vectors_to_upsert:
+                self._upsert_batch(vectors_to_upsert)
+
             with open(VECTOR_IDS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.pinecone_ids, f)
 
-            logger.info(f"Successfully processed {len(self.pinecone_ids)} sections")
+            logger.info(f"Successfully processed {len(self.pinecone_ids)} documents")
 
         except Exception as e:
             logger.error(f"Error in process_documentation: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def retrieve_documents(self, query: str, top_k: int = 5, min_score: float = 0.7) -> List[Dict[str, Any]]:
+    async def retrieve_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         try:
-            # Generate embedding for the query
             query_embedding = self.embedder.encode(query).tolist()
 
-            # Query the Pinecone index
             response = self.index.query(
                 vector=query_embedding,
                 top_k=top_k,
                 include_metadata=True
             )
 
-            # Filter results based on similarity score
             matching_docs = []
             for match in response['matches']:
-                if match['score'] >= min_score:
-                    matching_docs.append({
-                        "doc_name": match['metadata']['doc_name'],
-                        "similarity_score": match['score'],
-                        "processed_at": match['metadata'].get('timestamp', ''),
-                        "content": match['metadata'].get('content', "")
-                    })
+                matching_docs.append({
+                    "doc_name": match['metadata']['doc_name'],
+                    "similarity_score": match['score'],
+                    "processed_at": match['metadata'].get('timestamp', ''),
+                    "content": match['metadata'].get('content', "")
+                })
 
             return matching_docs
 
@@ -361,6 +251,12 @@ class DocumentationManager:
             logger.error(f"Error retrieving documents: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Document retrieval failed: {str(e)}")
 
+# Initialize FastAPI app
+app = FastAPI(
+    title="Documentation Assistant API",
+    description="AI-powered documentation assistant with complete content preservation",
+    version="2.0.0"
+)
 
 class QueryInput(BaseModel):
     """Validation model for query inputs"""
@@ -461,39 +357,41 @@ class CrewManager:
                     Query: {query}
                     Summary from Analysis: [Include key points]
                 """,
-                expected_output="A clear, structured response to the user’s query with references.",
+                expected_output="A clear, structured response to the user's query with references.",
                 agent=self.agents['assistant']
             )
         ]
+        # Dependency injection functions
+def get_config() -> Config:
+    return _config_instance
 
+def get_doc_manager(config: Config = Depends(get_config)) -> DocumentationManager:
+    return _doc_manager_instance
 
-# --- Create singleton instances so state persists across requests ---
+def get_crew_manager(config: Config = Depends(get_config)) -> CrewManager:
+    return _crew_manager_instance
+
+# Add CrewManager dependency
+async def get_crew_manager(config: Config = Depends(get_config)) -> CrewManager:
+    return _crew_manager_instance
+
+# Initialize singleton instances
 _config_instance = Config()
 _doc_manager_instance = DocumentationManager(_config_instance)
 _crew_manager_instance = CrewManager(_config_instance)
 
-# Initialize FastAPI app with metadata
+# Initialize FastAPI app
 app = FastAPI(
     title="Documentation Assistant API",
-    description="AI-powered documentation assistant with RAG capabilities",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    description="AI-powered documentation assistant with complete content preservation",
+    version="2.0.0"
 )
 
-# Enhanced dependency injection
-async def get_config() -> Config:
-    return _config_instance
 
-async def get_doc_manager(config: Config = Depends(get_config)) -> DocumentationManager:
-    return _doc_manager_instance
-
-async def get_crew_manager(config: Config = Depends(get_config)) -> CrewManager:
-    return _crew_manager_instance
+# Add CrewAI endpoint
 
 @app.get("/", tags=["General"])
 async def root():
-    """Root endpoint with API information"""
     return {
         "message": "Welcome to the Documentation Assistant API",
         "version": "2.0.0",
@@ -505,40 +403,27 @@ async def root():
 async def fetch_docs(
     doc_manager: DocumentationManager = Depends(get_doc_manager)
 ):
-    """
-    Fetch and process documentation asynchronously with enhanced error handling
-    and progress tracking.
-    """
     try:
         logger.info("Starting documentation fetch process...")
         docs_content = await doc_manager.fetch_markdown_files()
         
         if not docs_content:
-            raise HTTPException(
-                status_code=404, 
-                detail="No documentation found in the repository"
-            )
+            raise HTTPException(status_code=404, detail="No documentation found")
         
-        logger.info(f"Processing {len(docs_content)} documentation files...")
         doc_manager.process_documentation(docs_content)
         
-        # Enhanced response with detailed statistics
         return {
             "status": "success",
-            "message": "Documentation successfully fetched and indexed",
+            "message": "Documentation fetched and indexed",
             "stats": {
                 "files_processed": len(docs_content),
-                "sections_indexed": len(doc_manager.pinecone_ids),
-                "processed_at": datetime.now().isoformat(),
-                "files": list(docs_content.keys())
+                "files": list(docs_content.keys()),
+                "processed_at": datetime.now().isoformat()
             }
         }
     except Exception as e:
         logger.error(f"Error in documentation fetch: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Documentation fetch failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Documentation fetch failed: {str(e)}")
 
 @app.post("/ask_doc_assistant", tags=["Query"])
 async def ask_doc_assistant(
@@ -547,17 +432,16 @@ async def ask_doc_assistant(
     crew_manager: CrewManager = Depends(get_crew_manager)
 ):
     """
-    Process user queries using RAG with enhanced error handling and response structure.
+    Process user queries using RAG with CrewAI-powered analysis.
     """
     try:
         logger.info(f"Processing query: {query_input.query}")
         query_start_time = datetime.now()
 
-        # Retrieve relevant documentation with similarity threshold
+        # Retrieve relevant documentation
         matching_docs = await doc_manager.retrieve_documents(
             query=query_input.query,
-            top_k=15,
-            min_score=0.35
+            top_k=15
         )
 
         if not matching_docs:
@@ -590,7 +474,6 @@ async def ask_doc_assistant(
         
         result = crew.kickoff()
 
-        # Enhanced response structure
         structured_response = {
             "status": "success",
             "response": result,
@@ -604,7 +487,7 @@ async def ask_doc_assistant(
                     "doc_name": doc["doc_name"],
                     "similarity_score": doc["similarity_score"],
                     "processed_at": doc["processed_at"],
-                    "content_preview": doc["content"][:200] + "..."
+                    "content": doc["content"]  # Return full content
                 }
                 for doc in matching_docs
             ]
@@ -624,39 +507,19 @@ async def ask_doc_assistant(
             }
         )
 
-# Health check endpoint
-@app.get("/health", tags=["General"])
-async def health_check():
-    """Check API health status"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "components": {
-            "pinecone": "operational",
-            "documentation_manager": "operational",
-            "crew_manager": "operational"
-        }
-    }
 @app.delete("/clear_index", tags=["Maintenance"])
-async def clear_pinecone_index(
+async def clear_index(
     doc_manager: DocumentationManager = Depends(get_doc_manager)
 ):
-    """
-    Clear all vectors from the Pinecone index.
-    """
     try:
-        logger.info("Deleting all vectors from Pinecone index...")
+        logger.info("Clearing Pinecone index...")
         doc_manager.index.delete(delete_all=True)
-
-        # Clear the local vector ID list as well
         doc_manager.pinecone_ids = []
         with open(VECTOR_IDS_FILE, "w", encoding="utf-8") as f:
             json.dump([], f)
-
-        return {
-            "status": "success",
-            "message": "All vectors deleted from the Pinecone index."
-        }
+        return {"status": "success", "message": "Index cleared successfully"}
     except Exception as e:
-        logger.error(f"Error clearing Pinecone index: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to clear Pinecone index: {str(e)}")
+        logger.error(f"Error clearing index: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
