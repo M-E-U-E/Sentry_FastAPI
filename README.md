@@ -51,6 +51,8 @@ PINECONE_INDEX_NAME== # Replace with your desired index name
 PINECONE_ENDPOINT=
 
 CREWAI_DISABLE_TELEMETRY=true
+
+ADMIN_PASSWORD_HASH= hashcode of password
 ```
 
 #### .gitignore file
@@ -91,6 +93,11 @@ uvicorn main:app
 ```
 
 The server will start at `http://127.0.0.1:8000`
+
+### 5. Run the Gradio
+```bash
+python interface.py
+```
 
 ## API Usage
 
