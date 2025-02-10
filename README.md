@@ -16,8 +16,8 @@ This guide will help you set up and run the Documentation Assistant project, a F
 
 ```bash
 # Clone the repository
-git clone https://github.com/M-E-U-E/FastAPI.git
-cd FastAPI
+git clone https://github.com/M-E-U-E/Sentry_FastAPI.git
+cd Sentry_FastAPI
 
 # Create virtual environment
 python3 -m venv .venv
