@@ -1,4 +1,4 @@
-# FastAPI
+# Sentry_FastAPI
 # Documentation Assistant Setup Guide
 
 This guide will help you set up and run the Documentation Assistant project, a FastAPI-based application that processes and provides intelligent answers from markdown documentation.
