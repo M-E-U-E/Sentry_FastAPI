@@ -53,6 +53,15 @@ PINECONE_ENDPOINT=
 CREWAI_DISABLE_TELEMETRY=true
 
 ADMIN_PASSWORD_HASH= hashcode of password
+
+SENTRY_DSN=https: url of sentry
+SENTRY_ENVIRONMENT=production
+SENTRY_DEBUG=true
+SENTRY_SAMPLE_RATE=1.0
+SENTRY_ERROR_SAMPLE_RATE=1.0
+SERVER_NAME=fastapi-server
+
+
 ```
 
 #### .gitignore file
