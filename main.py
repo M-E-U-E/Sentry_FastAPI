@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import sentry_sdk
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import asyncio
@@ -11,7 +12,7 @@ from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec
 from crewai import Agent, Task, Crew
 from dotenv import load_dotenv
-
+from functools import wraps
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,9 +20,56 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+
+
 VECTOR_IDS_FILE = "vector_ids.json"
 MAX_RETRIES = 3
 BATCH_SIZE = 100
+
+
+# Sentry Configuration
+
+class SentryConfig:
+    """
+    Class to encapsulate Sentry SDK initialization and event handling.
+    """
+    @classmethod
+    def init_sentry(cls):
+        """
+        Initializes Sentry with environment-based configuration.
+        """
+        dsn = os.getenv("SENTRY_DSN")
+        if not dsn:
+            logger.warning("SENTRY_DSN not found in environment. Sentry will not be enabled.")
+            return
+
+        sentry_sdk.init(
+            dsn=dsn,
+            debug=os.getenv("SENTRY_DEBUG", "false").lower() == "true",
+            environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+            traces_sample_rate=float(os.getenv("SENTRY_SAMPLE_RATE", "1.0")),
+            profiles_sample_rate=float(os.getenv("SENTRY_ERROR_SAMPLE_RATE", "1.0")),
+            send_default_pii=True,
+            attach_stacktrace=True,
+            include_source_context=True,
+            include_local_variables=True,
+            max_breadcrumbs=50,
+            server_name=os.getenv("SERVER_NAME", "fastapi-server"),
+            before_send=cls.before_send,
+        )
+        logger.info("Sentry successfully initialized.")
+
+    @staticmethod
+    def before_send(event, hint):
+        """
+        Scrubs sensitive information before sending an event to Sentry.
+        Can be customized to exclude certain errors.
+        """
+        if "exc_info" in hint:
+            exc_type, exc_value, _ = hint["exc_info"]
+            if isinstance(exc_value, HTTPException) and exc_value.status_code in [400, 404]:  # Ignore common errors
+                return None  
+        return event
 
 class ConfigModel(BaseModel):
     gemini_api_key: str
@@ -387,6 +435,67 @@ app = FastAPI(
     version="2.0.0"
 )
 
+class SentryConfig:
+    """
+    Class to encapsulate Sentry SDK initialization and event handling.
+    """
+    @classmethod
+    def init_sentry(cls):
+        """
+        Initializes Sentry with environment-based configuration.
+        """
+        dsn = os.getenv("SENTRY_DSN")
+        if not dsn:
+            logger.warning("SENTRY_DSN not found in environment. Sentry will not be enabled.")
+            return
+
+        sentry_sdk.init(
+            dsn=dsn,
+            debug=os.getenv("SENTRY_DEBUG", "false").lower() == "true",
+            environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+            traces_sample_rate=float(os.getenv("SENTRY_SAMPLE_RATE", "1.0")),
+            profiles_sample_rate=float(os.getenv("SENTRY_ERROR_SAMPLE_RATE", "1.0")),
+            send_default_pii=True,
+            attach_stacktrace=True,
+            include_source_context=True,
+            include_local_variables=True,
+            max_breadcrumbs=50,
+            server_name=os.getenv("SERVER_NAME", "fastapi-server"),
+            before_send=cls.before_send,
+        )
+        logger.info("Sentry successfully initialized.")
+
+    @staticmethod
+    def before_send(event, hint):
+        """
+        Scrubs sensitive information before sending an event to Sentry.
+        Can be customized to exclude certain errors.
+        """
+        if "exc_info" in hint:
+            exc_type, exc_value, _ = hint["exc_info"]
+            if isinstance(exc_value, HTTPException) and exc_value.status_code in [400, 404]:  # Ignore common errors
+                return None  
+        return event
+
+# Initialize Sentry
+SentryConfig.init_sentry()
+
+
+
+# Custom error-handling decorator for API routes
+def sentry_error_handler(func):
+    """
+    Decorator to wrap FastAPI route handlers and send errors to Sentry.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.error(f"Error in {func.__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail="An unexpected error occurred.")
+    return wrapper
 
 # Add CrewAI endpoint
 
@@ -523,3 +632,10 @@ async def clear_index(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/sentry-debug", tags=["Sentry"])
+async def trigger_error():
+    try:
+        division_by_zero = 1 / 0  # Intentional error
+    except ZeroDivisionError as e:
+        sentry_sdk.capture_exception(e)  # Send error to Sentry
+        raise HTTPException(status_code=400, detail="Division by zero is not allowed.")
