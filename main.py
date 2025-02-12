@@ -75,18 +75,6 @@ class SentryConfig:
 
 
 
-class Settings(BaseSettings):
-    SENTRY_AUTH_TOKEN: str
-    ORG_SLUG: str
-    PROJECT_SLUG: str
-    GITHUB_REPO: str
-    GITHUB_BRANCH: str
-
-    # ✅ Correct way to load .env in Pydantic v2
-    model_config = SettingsConfigDict(env_file=".env", extra="allow")
-
-# ✅ Create an instance of Settings
-settings = Settings()
 
 
 class ConfigModel(BaseModel):
@@ -452,49 +440,6 @@ app = FastAPI(
     description="AI-powered documentation assistant with complete content preservation",
     version="2.0.0"
 )
-
-class SentryConfig:
-    """
-    Class to encapsulate Sentry SDK initialization and event handling.
-    """
-    @classmethod
-    def init_sentry(cls):
-        """
-        Initializes Sentry with environment-based configuration.
-        """
-        dsn = os.getenv("SENTRY_DSN")
-        if not dsn:
-            logger.warning("SENTRY_DSN not found in environment. Sentry will not be enabled.")
-            return
-
-        sentry_sdk.init(
-            dsn=dsn,
-            debug=os.getenv("SENTRY_DEBUG", "false").lower() == "true",
-            environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
-            traces_sample_rate=float(os.getenv("SENTRY_SAMPLE_RATE", "1.0")),
-            profiles_sample_rate=float(os.getenv("SENTRY_ERROR_SAMPLE_RATE", "1.0")),
-            send_default_pii=True,
-            attach_stacktrace=True,
-            include_source_context=True,
-            include_local_variables=True,
-            max_breadcrumbs=50,
-            server_name=os.getenv("SERVER_NAME", "fastapi-server"),
-            before_send=cls.before_send,
-        )
-        logger.info("Sentry successfully initialized.")
-
-    @staticmethod
-    def before_send(event, hint):
-        """
-        Scrubs sensitive information before sending an event to Sentry.
-        Can be customized to exclude certain errors.
-        """
-        if "exc_info" in hint:
-            exc_type, exc_value, _ = hint["exc_info"]
-            if isinstance(exc_value, HTTPException) and exc_value.status_code in [400, 404]:  # Ignore common errors
-                return None  
-        return event
-
 # Initialize Sentry
 SentryConfig.init_sentry()
 
@@ -659,55 +604,146 @@ async def trigger_error():
         raise HTTPException(status_code=400, detail="Division by zero is not allowed.")
 
 
-SENTRY_API_URL = f"https://sentry.io/api/0/projects/{settings.ORG_SLUG}/{settings.PROJECT_SLUG}/issues/"
+SENTRY_AUTH_TOKEN = os.getenv("SENTRY_AUTH_TOKEN")
+ORG_SLUG = os.getenv("ORG_SLUG")
+PROJECT_SLUG = os.getenv("PROJECT_SLUG")
+
+# SentryAPI class with OOP principles
+class SentryAPI:
+    def __init__(self, auth_token: str, organization_slug: str, project_slug: str):
+        self.auth_token = auth_token
+        self.base_url = "https://sentry.io/api/0"
+        self.org_slug = organization_slug
+        self.project_slug = project_slug
+        self.headers = {
+            'Authorization': f'Bearer {auth_token}',
+            'Content-Type': 'application/json'
+        }
+
+    def _get(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
+        """Helper method for making GET requests to Sentry API."""
+        url = f"{self.base_url}{endpoint}"
+        response = requests.get(url, headers=self.headers, params=params)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch data from Sentry")
+        
+        return response.json()
+
+    def get_latest_issues(self, limit: int = 100) -> List[Dict]:
+        """Fetch the latest unresolved issues from Sentry."""
+        endpoint = f"/projects/{self.org_slug}/{self.project_slug}/issues/"
+        params = {'limit': limit, 'query': 'is:unresolved'}
+        return self._get(endpoint, params)
+
+    def get_error_location(self, event_id: str) -> Dict:
+        """Get the specific error location including file, line number, and code context."""
+        endpoint = f"/projects/{self.org_slug}/{self.project_slug}/events/{event_id}/"
+        event_data = self._get(endpoint)
+        
+        error_location = {
+            'file': None,
+            'line_number': None,
+            'context_lines': [],
+            'error_line': None,
+            'function': None
+        }
+
+        if 'entries' in event_data:
+            for entry in event_data.get('entries', []):
+                if entry.get('type') == 'exception':
+                    frames = entry.get('data', {}).get('values', [])[0].get('stacktrace', {}).get('frames', [])
+                    if frames:
+                        last_frame = frames[-1]
+                        error_location.update({
+                            'file': last_frame.get('filename'),
+                            'line_number': last_frame.get('lineno'),
+                            'context_lines': last_frame.get('context_line'),
+                            'function': last_frame.get('function'),
+                            'pre_context': last_frame.get('pre_context', []),
+                            'post_context': last_frame.get('post_context', [])
+                        })
+        return error_location
+
+    def get_full_error_details(self, issue_id: str) -> Dict:
+        """Get comprehensive error details including stack trace and error location."""
+        endpoint = f"/issues/{issue_id}/events/latest/"
+        event_data = self._get(endpoint)
+        
+        error_details = {
+            'error_type': None,
+            'error_message': None,
+            'error_location': None,
+            'stack_trace': [],
+            'timestamp': None
+        }
+        
+        if 'entries' in event_data:
+            for entry in event_data.get('entries', []):
+                if entry.get('type') == 'exception':
+                    exception = entry.get('data', {}).get('values', [])[0]
+                    error_details.update({
+                        'error_type': exception.get('type'),
+                        'error_message': exception.get('value'),
+                        'timestamp': event_data.get('dateCreated')
+                    })
+
+                    frames = exception.get('stacktrace', {}).get('frames', [])
+                    error_details['stack_trace'] = [
+                        {
+                            'filename': frame.get('filename'),
+                            'function': frame.get('function'),
+                            'line_number': frame.get('lineno'),
+                            'context_line': frame.get('context_line')
+                        }
+                        for frame in frames
+                    ]
+        
+        error_details['error_location'] = self.get_error_location(event_data.get('eventID'))
+        
+        return error_details
+
+
+class ErrorDetailResponse(BaseModel):
+    error_type: Optional[str]
+    error_message: Optional[str]
+    error_location: Optional[Dict]
+    stack_trace: List[Dict]
+    timestamp: Optional[str]
+
+
+
+
+# Initialize the SentryAPI class using credentials loaded from .env
+sentry_api = SentryAPI(auth_token=SENTRY_AUTH_TOKEN, organization_slug=ORG_SLUG, project_slug=PROJECT_SLUG)
+
 
 @app.get("/get-sentry-issues")
-async def get_sentry_issues():
-    """
-    Fetch all issues from the Sentry AI project and map them to GitHub file links.
-    """
-    headers = {
-        "Authorization": f"Bearer {settings.SENTRY_AUTH_TOKEN}",  # ✅ Use settings instance
-        "Content-Type": "application/json"
-    }
-    
-    response = requests.get(SENTRY_API_URL, headers=headers)
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail="Failed to fetch Sentry issues")
-
-    issues = response.json()
-    
-    # Process issues to include GitHub file links
+async def get_sentry_issues(limit: int = 100):
+    issues = sentry_api.get_latest_issues(limit=limit)
     formatted_issues = []
+
     for issue in issues:
         issue_id = issue["id"]
         title = issue["title"]
         permalink = issue["permalink"]
-
-        # Fetch issue details (to get stack trace)
-        issue_detail_url = f"https://sentry.io/api/0/issues/{issue_id}/events/latest/"
-        detail_response = requests.get(issue_detail_url, headers=headers)
-        
-        github_link = "N/A"  # Default in case file path is not found
-        if detail_response.status_code == 200:
-            event_data = detail_response.json()
-            try:
-                stacktrace_frames = event_data["exception"]["values"][0]["stacktrace"]["frames"]
-                for frame in reversed(stacktrace_frames):  # Reverse to find the most relevant file
-                    file_path = frame.get("abs_path", "").replace("\\", "/")  # Normalize path
-                    if file_path and "your-repo-folder" in file_path:
-                        filename = file_path.split("/")[-1]
-                        github_link = f"https://github.com/{settings.GITHUB_REPO}/blob/{settings.GITHUB_BRANCH}/{filename}"
-                        break  # Stop at the first valid file
-            except (KeyError, IndexError):
-                github_link = "N/A"
+        error_details = sentry_api.get_full_error_details(issue_id)
 
         formatted_issues.append({
             "id": issue_id,
             "title": title,
             "permalink": permalink,
-            "github_link": github_link
+            "error_type": error_details['error_type'],
+            "error_message": error_details['error_message'],
+            # "stack_trace": error_details['stack_trace'],
+            "error_location": error_details['error_location'],
+            "timestamp": error_details['timestamp']
         })
 
     return {"status": "success", "issues": formatted_issues}
+
+
+@app.get("/get-sentry-error-details/{issue_id}", response_model=ErrorDetailResponse)
+async def get_error_details(issue_id: str):
+    error_details = sentry_api.get_full_error_details(issue_id)
+    return error_details
