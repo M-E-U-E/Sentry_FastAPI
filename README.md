@@ -61,6 +61,13 @@ SENTRY_SAMPLE_RATE=1.0
 SENTRY_ERROR_SAMPLE_RATE=1.0
 SERVER_NAME=fastapi-server
 
+SENTRY_AUTH_TOKEN=Sentry token
+ORG_SLUG=w3-engineers-ltd-dp
+PROJECT_SLUG=sentry_ai
+
+GITHUB_REPO=repo link
+GITHUB_BRANCH=main
+
 
 ```
 
