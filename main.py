@@ -2,12 +2,14 @@ import os
 import json
 import logging
 import sentry_sdk
+import requests
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import asyncio
 import aiohttp
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec
 from crewai import Agent, Task, Crew
@@ -70,6 +72,22 @@ class SentryConfig:
             if isinstance(exc_value, HTTPException) and exc_value.status_code in [400, 404]:  # Ignore common errors
                 return None  
         return event
+
+
+
+class Settings(BaseSettings):
+    SENTRY_AUTH_TOKEN: str
+    ORG_SLUG: str
+    PROJECT_SLUG: str
+    GITHUB_REPO: str
+    GITHUB_BRANCH: str
+
+    # ✅ Correct way to load .env in Pydantic v2
+    model_config = SettingsConfigDict(env_file=".env", extra="allow")
+
+# ✅ Create an instance of Settings
+settings = Settings()
+
 
 class ConfigModel(BaseModel):
     gemini_api_key: str
@@ -639,3 +657,57 @@ async def trigger_error():
     except ZeroDivisionError as e:
         sentry_sdk.capture_exception(e)  # Send error to Sentry
         raise HTTPException(status_code=400, detail="Division by zero is not allowed.")
+
+
+SENTRY_API_URL = f"https://sentry.io/api/0/projects/{settings.ORG_SLUG}/{settings.PROJECT_SLUG}/issues/"
+
+@app.get("/get-sentry-issues")
+async def get_sentry_issues():
+    """
+    Fetch all issues from the Sentry AI project and map them to GitHub file links.
+    """
+    headers = {
+        "Authorization": f"Bearer {settings.SENTRY_AUTH_TOKEN}",  # ✅ Use settings instance
+        "Content-Type": "application/json"
+    }
+    
+    response = requests.get(SENTRY_API_URL, headers=headers)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch Sentry issues")
+
+    issues = response.json()
+    
+    # Process issues to include GitHub file links
+    formatted_issues = []
+    for issue in issues:
+        issue_id = issue["id"]
+        title = issue["title"]
+        permalink = issue["permalink"]
+
+        # Fetch issue details (to get stack trace)
+        issue_detail_url = f"https://sentry.io/api/0/issues/{issue_id}/events/latest/"
+        detail_response = requests.get(issue_detail_url, headers=headers)
+        
+        github_link = "N/A"  # Default in case file path is not found
+        if detail_response.status_code == 200:
+            event_data = detail_response.json()
+            try:
+                stacktrace_frames = event_data["exception"]["values"][0]["stacktrace"]["frames"]
+                for frame in reversed(stacktrace_frames):  # Reverse to find the most relevant file
+                    file_path = frame.get("abs_path", "").replace("\\", "/")  # Normalize path
+                    if file_path and "your-repo-folder" in file_path:
+                        filename = file_path.split("/")[-1]
+                        github_link = f"https://github.com/{settings.GITHUB_REPO}/blob/{settings.GITHUB_BRANCH}/{filename}"
+                        break  # Stop at the first valid file
+            except (KeyError, IndexError):
+                github_link = "N/A"
+
+        formatted_issues.append({
+            "id": issue_id,
+            "title": title,
+            "permalink": permalink,
+            "github_link": github_link
+        })
+
+    return {"status": "success", "issues": formatted_issues}

@@ -103,6 +103,7 @@ nbclient==0.10.2
 nbconvert==7.16.6
 nbformat==5.10.4
 networkx==3.4.2
+ngrok==1.4.0
 numpy==2.2.2
 nvidia-cublas-cu12==12.4.5.8
 nvidia-cuda-cupti-cu12==12.4.127
@@ -162,6 +163,7 @@ pyasn1_modules==0.4.1
 pycparser==2.22
 pycryptodome==3.21.0
 pydantic==2.10.6
+pydantic-settings==2.7.1
 pydantic_core==2.27.2
 pydub==0.25.1
 Pygments==2.19.1
