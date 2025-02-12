@@ -108,11 +108,16 @@ pip install -r requirements.txt
 uvicorn main:app
 ```
 
+
 The server will start at `http://127.0.0.1:8000`
 
 ### 5. Run the Gradio
 ```bash
 python interface.py
+```
+## Hosting by using ipv4
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 ## The Main Documentation of the project will be live at:
 ```
