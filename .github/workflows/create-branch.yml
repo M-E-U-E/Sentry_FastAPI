@@ -1,0 +1,19 @@
+name: Create Branch on Dispatch
+
+on:
+  repository_dispatch:
+    types: [create-branch]
+
+jobs:
+  create_branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Create new branch
+        run: |
+          BRANCH_NAME="${{ github.event.client_payload.branch_name }}"
+          echo "Creating branch: $BRANCH_NAME"
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"

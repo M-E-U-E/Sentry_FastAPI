@@ -7,6 +7,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import asyncio
 import aiohttp
+import httpx
+import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel, Field, HttpUrl, validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +17,7 @@ from pinecone import Pinecone, ServerlessSpec
 from crewai import Agent, Task, Crew
 from dotenv import load_dotenv
 from functools import wraps
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -607,8 +610,11 @@ async def trigger_error():
 SENTRY_AUTH_TOKEN = os.getenv("SENTRY_AUTH_TOKEN")
 ORG_SLUG = os.getenv("ORG_SLUG")
 PROJECT_SLUG = os.getenv("PROJECT_SLUG")
+GITHUB_WEBHOOK_URL = os.getenv("GITHUB_WEBHOOK_URL")
+GITHUB_PAT = os.getenv("GITHUB_PAT")
 
-# SentryAPI class with OOP principles
+
+#Class Sentry
 class SentryAPI:
     def __init__(self, auth_token: str, organization_slug: str, project_slug: str):
         self.auth_token = auth_token
@@ -624,10 +630,8 @@ class SentryAPI:
         """Helper method for making GET requests to Sentry API."""
         url = f"{self.base_url}{endpoint}"
         response = requests.get(url, headers=self.headers, params=params)
-        
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail="Failed to fetch data from Sentry")
-        
         return response.json()
 
     def get_latest_issues(self, limit: int = 100) -> List[Dict]:
@@ -646,7 +650,9 @@ class SentryAPI:
             'line_number': None,
             'context_lines': [],
             'error_line': None,
-            'function': None
+            'function': None,
+            'pre_context': [],
+            'post_context': []
         }
 
         if 'entries' in event_data:
@@ -659,6 +665,7 @@ class SentryAPI:
                             'file': last_frame.get('filename'),
                             'line_number': last_frame.get('lineno'),
                             'context_lines': last_frame.get('context_line'),
+                            'error_line': last_frame.get('context_line'),  # example mapping
                             'function': last_frame.get('function'),
                             'pre_context': last_frame.get('pre_context', []),
                             'post_context': last_frame.get('post_context', [])
@@ -687,7 +694,6 @@ class SentryAPI:
                         'error_message': exception.get('value'),
                         'timestamp': event_data.get('dateCreated')
                     })
-
                     frames = exception.get('stacktrace', {}).get('frames', [])
                     error_details['stack_trace'] = [
                         {
@@ -698,11 +704,8 @@ class SentryAPI:
                         }
                         for frame in frames
                     ]
-        
         error_details['error_location'] = self.get_error_location(event_data.get('eventID'))
-        
         return error_details
-
 
 class ErrorDetailResponse(BaseModel):
     error_type: Optional[str]
@@ -711,10 +714,7 @@ class ErrorDetailResponse(BaseModel):
     stack_trace: List[Dict]
     timestamp: Optional[str]
 
-
-
-
-# Initialize the SentryAPI class using credentials loaded from .env
+# Initialize the SentryAPI class
 sentry_api = SentryAPI(auth_token=SENTRY_AUTH_TOKEN, organization_slug=ORG_SLUG, project_slug=PROJECT_SLUG)
 
 
@@ -722,23 +722,44 @@ sentry_api = SentryAPI(auth_token=SENTRY_AUTH_TOKEN, organization_slug=ORG_SLUG,
 async def get_sentry_issues(limit: int = 100):
     issues = sentry_api.get_latest_issues(limit=limit)
     formatted_issues = []
+    
+    # Use an asynchronous HTTP client to send webhook calls
+    async with httpx.AsyncClient() as client:
+        for issue in issues:
+            issue_id = issue["id"]
+            title = issue["title"]
+            permalink = issue["permalink"]
+            error_details = sentry_api.get_full_error_details(issue_id)
 
-    for issue in issues:
-        issue_id = issue["id"]
-        title = issue["title"]
-        permalink = issue["permalink"]
-        error_details = sentry_api.get_full_error_details(issue_id)
+            formatted_issue = {
+                "id": issue_id,
+                "title": title,
+                "permalink": permalink,
+                "error_type": error_details['error_type'],
+                "error_message": error_details['error_message'],
+                "error_location": error_details['error_location'],
+                "timestamp": error_details['timestamp']
+            }
+            formatted_issues.append(formatted_issue)
 
-        formatted_issues.append({
-            "id": issue_id,
-            "title": title,
-            "permalink": permalink,
-            "error_type": error_details['error_type'],
-            "error_message": error_details['error_message'],
-            # "stack_trace": error_details['stack_trace'],
-            "error_location": error_details['error_location'],
-            "timestamp": error_details['timestamp']
-        })
+            # Prepare payload for GitHub repository dispatch event
+            webhook_payload = {
+                "event_type": "create-branch",
+                "client_payload": {
+                    "branch_name": issue_id,  # The branch name will be the Sentry issue ID
+                    "issue_title": title,
+                    "permalink": permalink
+                }
+            }
+            # Send the POST request to trigger the GitHub Action
+            headers = {
+                "Authorization": f"token {GITHUB_PAT}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+            webhook_response = await client.post(GITHUB_WEBHOOK_URL, json=webhook_payload, headers=headers)
+            if webhook_response.status_code != 204:
+                # GitHub API returns 204 on success for repository_dispatch events
+                print(f"Webhook call failed for issue {issue_id}: {webhook_response.status_code} {webhook_response.text}")
 
     return {"status": "success", "issues": formatted_issues}
 
