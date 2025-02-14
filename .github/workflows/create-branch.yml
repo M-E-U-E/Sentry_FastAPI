@@ -10,10 +10,18 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
       - name: Create new branch
         run: |
           BRANCH_NAME="${{ github.event.client_payload.branch_name }}"
           echo "Creating branch: $BRANCH_NAME"
-          git checkout -b "$BRANCH_NAME"
+          git fetch origin
+          git checkout -b "$BRANCH_NAME" origin/main
           git push origin "$BRANCH_NAME"
