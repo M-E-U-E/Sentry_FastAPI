@@ -613,8 +613,9 @@ PROJECT_SLUG = os.getenv("PROJECT_SLUG")
 GITHUB_WEBHOOK_URL = os.getenv("GITHUB_WEBHOOK_URL")
 GITHUB_PAT = os.getenv("GITHUB_PAT")
 
+# Processed issues (to avoid duplicate branches)
+processed_issues = set()
 
-#Class Sentry
 class SentryAPI:
     def __init__(self, auth_token: str, organization_slug: str, project_slug: str):
         self.auth_token = auth_token
@@ -644,7 +645,7 @@ class SentryAPI:
         """Get the specific error location including file, line number, and code context."""
         endpoint = f"/projects/{self.org_slug}/{self.project_slug}/events/{event_id}/"
         event_data = self._get(endpoint)
-        
+
         error_location = {
             'file': None,
             'line_number': None,
@@ -665,7 +666,7 @@ class SentryAPI:
                             'file': last_frame.get('filename'),
                             'line_number': last_frame.get('lineno'),
                             'context_lines': last_frame.get('context_line'),
-                            'error_line': last_frame.get('context_line'),  # example mapping
+                            'error_line': last_frame.get('context_line'),
                             'function': last_frame.get('function'),
                             'pre_context': last_frame.get('pre_context', []),
                             'post_context': last_frame.get('post_context', [])
@@ -676,7 +677,7 @@ class SentryAPI:
         """Get comprehensive error details including stack trace and error location."""
         endpoint = f"/issues/{issue_id}/events/latest/"
         event_data = self._get(endpoint)
-        
+
         error_details = {
             'error_type': None,
             'error_message': None,
@@ -684,7 +685,7 @@ class SentryAPI:
             'stack_trace': [],
             'timestamp': None
         }
-        
+
         if 'entries' in event_data:
             for entry in event_data.get('entries', []):
                 if entry.get('type') == 'exception':
@@ -707,6 +708,7 @@ class SentryAPI:
         error_details['error_location'] = self.get_error_location(event_data.get('eventID'))
         return error_details
 
+
 class ErrorDetailResponse(BaseModel):
     error_type: Optional[str]
     error_message: Optional[str]
@@ -714,8 +716,66 @@ class ErrorDetailResponse(BaseModel):
     stack_trace: List[Dict]
     timestamp: Optional[str]
 
-# Initialize the SentryAPI class
+
+# Initialize Sentry API
 sentry_api = SentryAPI(auth_token=SENTRY_AUTH_TOKEN, organization_slug=ORG_SLUG, project_slug=PROJECT_SLUG)
+
+
+async def check_sentry_issues():
+    """Periodically checks for new Sentry issues and creates GitHub branches."""
+    while True:
+        try:
+            issues = sentry_api.get_latest_issues(limit=100)
+            async with httpx.AsyncClient() as client:
+                for issue in issues:
+                    issue_id = issue["id"]
+
+                    if issue_id in processed_issues:
+                        continue  # Skip if the issue was already processed
+
+                    title = issue["title"]
+                    permalink = issue["permalink"]
+                    error_details = sentry_api.get_full_error_details(issue_id)
+
+                    # Prepare payload for GitHub repository dispatch event
+                    webhook_payload = {
+                        "event_type": "create-branch",
+                        "client_payload": {
+                            "branch_name": issue_id,  # Branch name will be the Sentry issue ID
+                            "issue_title": title,
+                            "permalink": permalink
+                        }
+                    }
+
+                    # Send the POST request to trigger the GitHub Action
+                    headers = {
+                        "Authorization": f"token {GITHUB_PAT}",
+                        "Accept": "application/vnd.github.v3+json"
+                    }
+                    webhook_response = await client.post(GITHUB_WEBHOOK_URL, json=webhook_payload, headers=headers)
+
+                    if webhook_response.status_code == 204:
+                        print(f"✅ Branch creation triggered for issue {issue_id}")
+                        processed_issues.add(issue_id)  # Mark issue as processed
+                    else:
+                        print(f"❌ Webhook call failed for issue {issue_id}: {webhook_response.status_code} {webhook_response.text}")
+
+        except Exception as e:
+            print(f"⚠️ Error fetching Sentry issues: {str(e)}")
+
+        await asyncio.sleep(60)  # Wait 60 seconds before checking again
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start checking for Sentry issues when FastAPI starts."""
+    asyncio.create_task(check_sentry_issues())
+
+
+@app.get("/status")
+async def get_status():
+    """Check how many issues have been processed."""
+    return {"processed_issues": list(processed_issues)}
 
 
 @app.get("/get-sentry-issues")
