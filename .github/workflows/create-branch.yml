@@ -11,7 +11,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  
+          fetch-depth: 0  # Fetch all history
 
       - name: Configure Git
         run: |
@@ -23,5 +23,6 @@ jobs:
           BRANCH_NAME="${{ github.event.client_payload.branch_name }}"
           echo "Creating branch: $BRANCH_NAME"
           git fetch origin
-          git checkout -b "$BRANCH_NAME" origin/main
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+          git checkout -b "$BRANCH_NAME" "origin/$DEFAULT_BRANCH"
           git push origin "$BRANCH_NAME"
