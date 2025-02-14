@@ -68,6 +68,11 @@ PROJECT_SLUG=sentry_ai
 GITHUB_REPO=repo link
 GITHUB_BRANCH=main
 
+
+GITHUB_WEBHOOK_URL=webhook
+
+GITHUB_PAT=pr_token
+
 export GITHUB_PAT="token"
 echo $GITHUB_PAT
 
