@@ -68,6 +68,27 @@ PROJECT_SLUG=sentry_ai
 GITHUB_REPO=repo link
 GITHUB_BRANCH=main
 
+export GITHUB_PAT="token"
+echo $GITHUB_PAT
+
+curl for check pat token is okay
+
+curl -X GET -H "Authorization: token tk" \
+-H "Accept: application/vnd.github.v3+json" \
+https://api.github.com/user
+
+curl code for create branch
+
+curl -X POST \
+-H "Authorization: token tk" \
+-H "Accept: application/vnd.github.v3+json" \
+https://api.github.com/repos/M-E-U-E/Sentry_FastAPI/dispatches \
+-d '{
+  "event_type": "create-branch",
+  "client_payload": {
+    "branch_name": "test-branch"
+  }
+}'
 
 ```
 
