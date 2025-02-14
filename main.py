@@ -824,7 +824,26 @@ async def get_sentry_issues(limit: int = 100):
     return {"status": "success", "issues": formatted_issues}
 
 
-@app.get("/get-sentry-error-details/{issue_id}", response_model=ErrorDetailResponse)
+@app.get("/get-sentry-error-details/{issue_id}")
 async def get_error_details(issue_id: str):
+    """Fetches detailed error information for a specific Sentry issue in the same format as `/get-sentry-issues`."""
+    
+    # Fetch error details from Sentry API
     error_details = sentry_api.get_full_error_details(issue_id)
-    return error_details
+    
+    # If issue does not exist, return 404
+    if not error_details.get("error_type"):
+        return {"status": "error", "message": f"Issue {issue_id} not found in Sentry"}
+    
+    # Format the response similar to `/get-sentry-issues`
+    formatted_issue = {
+        "id": issue_id,
+        "title": error_details.get("error_message", "No title available"),
+        "permalink": f"https://sentry.io/organizations/{ORG_SLUG}/issues/{issue_id}/",
+        "error_type": error_details["error_type"],
+        "error_message": error_details["error_message"],
+        "error_location": error_details["error_location"],
+        "timestamp": error_details["timestamp"]
+    }
+
+    return {"status": "success", "issue": formatted_issue}
