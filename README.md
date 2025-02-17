@@ -95,6 +95,19 @@ https://api.github.com/repos/M-E-U-E/Sentry_FastAPI/dispatches \
   }
 }'
 
+Json input for code fix:
+
+{
+  "error_id": "6306607121",
+  "error_title": "ZeroDivisionError: division by zero",
+  "error_message": "division by zero",
+  "error_location": {
+    "file": "main.py",
+    "function": "trigger_error"
+  }
+}
+
+
 ```
 
 #### .gitignore file
