@@ -76,6 +76,9 @@ GITHUB_PAT=pr_token
 export GITHUB_PAT="token"
 echo $GITHUB_PAT
 
+DEBUG_MODE=False
+
+
 curl for check pat token is okay
 
 curl -X GET -H "Authorization: token tk" \
