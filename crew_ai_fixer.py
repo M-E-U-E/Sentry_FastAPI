@@ -118,11 +118,11 @@ def update_file_content(repo_url: str, file_path: str, new_content: str, commit_
         return f"Error updating file: {str(e)}"
 
 # -------------------------
-# ✅ Sentry CrewAI Fixer Class (Modular and Optimized)
+# ✅ Sentry CrewAI Fixer Class (Optimized with Scoring Agent)
 # -------------------------
 
 class SentryCrewFixer:
-    """Handles automated error diagnosis and fixing for FastAPI + Sentry applications."""
+    """Handles automated error diagnosis, fixing, and scoring for FastAPI + Sentry applications."""
 
     def __init__(self):
         self.github_token = os.getenv("GITHUB_PAT")
@@ -130,74 +130,47 @@ class SentryCrewFixer:
 
     def create_gemini_llm(self, temperature=0.2):
         """Creates a Gemini AI model with specified temperature settings."""
-        # Check if API key and other arguments are passed differently.
         config = GoogleAIStudioGeminiConfig(
             model="models/gemini-2.0-flash", 
             temperature=temperature,
             provider="google",  
             api_key=self.google_api_key  
         )
-
         return config
 
     def create_agents(self):
-        """Creates CrewAI agents for error analysis and fixing."""
+        """Creates CrewAI agents for error analysis, fixing, and scoring."""
         return [
             Agent(
-                role="Code Analyzer",
-                goal="Analyze Sentry FastAPI codebase and identify issues",
-                backstory="Expert in FastAPI and Sentry error diagnostics.",
+                role="Code Analyzer and Fixer",
+                goal="Identify, analyze and remediate critical FastAPI application vulnerabilities with a focus on error handling, monitoring, and performance optimization while ensuring production stability and security best practices",
+                backstory="Senior backend architect with 10+ years of experience in distributed systems and error handling. Specializes in FastAPI ecosystem optimization, Sentry integration, and implementing robust error monitoring solutions. Has successfully debugged and fixed critical production issues across high-traffic applications.",
                 verbose=True,
                 llm="gemini/gemini-2.0-flash"
             ),
             Agent(
-                role="Root Cause Investigator",
-                goal="Identify root causes of Sentry-reported errors",
-                backstory="Specializes in tracing FastAPI errors to their source.",
-                verbose=True,
-                llm="gemini/gemini-2.0-flash"
-            ),
-            Agent(
-                role="Solution Architect",
-                goal="Design fixes for FastAPI and Sentry integration issues",
-                backstory="Senior FastAPI architect with deep Sentry knowledge.",
-                verbose=True,
-                llm="gemini/gemini-2.0-flash"
-            ),
-            Agent(
-                role="Code Implementer",
-                goal="Implement fixes for Sentry-reported issues",
-                backstory="FastAPI expert implementing precise fixes.",
+                role="Performance Impact Evaluator",
+                goal="Quantitatively assess code fixes impact on system reliability, performance, and security while providing detailed severity scores and improvement metrics based on industry standards",
+                backstory="Former SRE lead at major tech companies with deep expertise in performance monitoring, error tracking, and reliability engineering. Created scoring frameworks used by Fortune 500 companies to evaluate system health and code quality. Expert in translating technical metrics into business impact assessments.",
                 verbose=True,
                 llm="gemini/gemini-2.0-flash"
             ),
         ]
 
-
     def fix_error(self, request_data: Dict):
-        """Executes CrewAI workflow to diagnose and fix an error."""
+        """Executes CrewAI workflow to diagnose, fix, and score an error."""
         try:
             agents = self.create_agents()
             tasks = [
                 Task(
-                    description=f"Analyze error {request_data['error_id']} in {request_data['error_location']['file']}.",
-                    expected_output="A detailed analysis of possible issues in the FastAPI code.",
+                    description=f"Analyze and fix error {request_data['error_id']} in {request_data['error_location']['file']}.",
+                    expected_output="A detailed analysis and fix for the error in the FastAPI code.",
                     agent=agents[0]
                 ),
                 Task(
-                    description=f"Trace root cause of {request_data['error_id']}.",
-                    expected_output="Identification of the exact failure point in the code.",
+                    description=f"Score the final fix for error {request_data['error_id']} based on severity.",
+                    expected_output="A score (1-100) indicating how well the fix addresses the issue.",
                     agent=agents[1]
-                ),
-                Task(
-                    description=f"Propose a fix for {request_data['error_id']}.",
-                    expected_output="A recommended code fix based on best practices.",
-                    agent=agents[2]
-                ),
-                Task(
-                    description=f"Implement and test fix for {request_data['error_id']}.",
-                    expected_output="Updated code with applied fixes and successful test results.",
-                    agent=agents[3]
                 ),
             ]
 
@@ -208,12 +181,12 @@ class SentryCrewFixer:
             raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------
-# ✅ FastAPI Endpoint (Fixed)
+# ✅ FastAPI Endpoint (Fixed with Scoring)
 # -------------------------
 
 @app.post("/crew-ai/fix-error")
 async def fix_sentry_error(request: ErrorFixRequest):
-    """API endpoint to analyze and fix Sentry-reported errors."""
+    """API endpoint to analyze, fix, and score Sentry-reported errors."""
     fixer = SentryCrewFixer()
     return {"status": "success", "fix_result": fixer.fix_error(request.model_dump())}
 
