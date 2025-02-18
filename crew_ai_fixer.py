@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import base64
 import json
@@ -40,89 +41,121 @@ class ErrorFixRequest(BaseModel):
     error_location: Dict[str, str]  # Ensures correct type
 
 # -------------------------
-# ✅ GitHub API Utility Functions with Proper Docstrings
+# ✅ GitHub API Utility Functions
 # -------------------------
 
-@tool
-def get_repository_info(repo_url: str) -> str:
-    """Fetches details and contents of a GitHub repository."""
-    try:
-        parts = repo_url.strip("/").split("/")
-        owner, repo = parts[-2], parts[-1]
+def get_latest_branch_commit(owner, repo, branch):
+    """Gets the latest commit SHA of a branch."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{branch}"
+    headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
+    
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        logging.warning(f"Branch '{branch}' not found. Creating a new one.")
+        return None  # Indicates branch does not exist
+    response.raise_for_status()
+    return response.json()["object"]["sha"]
 
-        headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
-        repo_api_url = f"https://api.github.com/repos/{owner}/{repo}"
+def create_new_branch(owner, repo, branch):
+    """Creates a new branch from the latest main branch commit."""
+    base_branch = "main"
+    latest_commit = get_latest_branch_commit(owner, repo, base_branch)
 
-        repo_response = requests.get(repo_api_url, headers=headers)
-        repo_response.raise_for_status()
+    if latest_commit is None:
+        raise ValueError(f"Base branch '{base_branch}' does not exist in {repo}.")
 
-        contents_url = f"{repo_api_url}/contents"
-        contents_response = requests.get(contents_url, headers=headers)
-        contents_response.raise_for_status()
+    headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
+    branch_url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
+    new_branch_data = {
+        "ref": f"refs/heads/{branch}",
+        "sha": latest_commit
+    }
+    response = requests.post(branch_url, headers=headers, json=new_branch_data)
+    response.raise_for_status()
+    logging.info(f"Created new branch: {branch}")
 
-        return f"Repository Details:\n{json.dumps(repo_response.json(), indent=2)}\n\nRoot Contents:\n{json.dumps(contents_response.json(), indent=2)}"
-    except requests.RequestException as e:
-        logging.error(f"GitHub API Error: {str(e)}")
-        return f"Error accessing repository: {str(e)}"
+def get_default_branch(owner, repo):
+    """Fetches the default branch of the repository."""
+    url = f"https://api.github.com/repos/{owner}/{repo}"
+    headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
+    
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    repo_data = response.json()
+    
+    return repo_data.get("default_branch", "main")  # Fallback to "main" if not found
 
-@tool
-def get_file_content(repo_url: str, file_path: str) -> str:
-    """Fetches the content of a file from a GitHub repository."""
-    try:
-        parts = repo_url.strip("/").split("/")
-        owner, repo = parts[-2], parts[-1]
+def push_updated_code(repo_base_url, file_path, new_content, commit_message, branch):
+    """Pushes updated code to a dynamically generated branch and creates a pull request."""
+    parts = repo_base_url.strip("/").split("/")
+    owner, repo = parts[-2], parts[-1]
+    headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
 
-        headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
-        file_api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+    # ✅ Fetch the repository’s default branch dynamically
+    base_branch = get_default_branch(owner, repo)
+    logging.info(f"Default branch of {repo}: {base_branch}")
 
-        response = requests.get(file_api_url, headers=headers)
-        response.raise_for_status()
+    # ✅ Ensure branch exists
+    if get_latest_branch_commit(owner, repo, branch) is None:
+        create_new_branch(owner, repo, branch)
 
-        file_data = response.json()
-        if file_data.get("type") != "file":
-            return f"Invalid file path: {file_path}"
+    # ✅ Get file details (Ensure file exists)
+    file_api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={branch}"
+    response = requests.get(file_api_url, headers=headers)
 
-        return base64.b64decode(file_data["content"]).decode("utf-8")
-    except requests.RequestException as e:
-        logging.error(f"GitHub API Error: {str(e)}")
-        return f"Error accessing file: {str(e)}"
+    if response.status_code == 404:
+        raise ValueError(f"File '{file_path}' not found in branch '{branch}'.")
 
-@tool
-def update_file_content(repo_url: str, file_path: str, new_content: str, commit_message: str) -> str:
-    """Updates a file in a GitHub repository with new content."""
-    try:
-        parts = repo_url.strip("/").split("/")
-        owner, repo = parts[-2], parts[-1]
+    response.raise_for_status()
+    file_data = response.json()
+    file_sha = file_data["sha"]
 
-        headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
-        file_api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+    # ✅ Update file content
+    update_payload = {
+        "message": commit_message,
+        "content": base64.b64encode(new_content.encode("utf-8")).decode("utf-8"),
+        "sha": file_sha,
+        "branch": branch
+    }
 
-        response = requests.get(file_api_url, headers=headers)
-        response.raise_for_status()
+    update_response = requests.put(file_api_url, headers=headers, json=update_payload)
+    update_response.raise_for_status()
+    logging.info(f"File {file_path} updated successfully on branch {branch}.")
 
-        file_data = response.json()
-        file_sha = file_data["sha"]
+    # ✅ Check if a PR already exists
+    pr_list_url = f"https://api.github.com/repos/{owner}/{repo}/pulls?head={owner}:{branch}"
+    pr_list_response = requests.get(pr_list_url, headers=headers)
 
-        update_payload = {
-            "message": commit_message,
-            "content": base64.b64encode(new_content.encode("utf-8")).decode("utf-8"),
-            "sha": file_sha
-        }
+    if pr_list_response.status_code == 200 and pr_list_response.json():
+        existing_pr = pr_list_response.json()[0]["html_url"]
+        logging.info(f"PR already exists: {existing_pr}")
+        return f"PR already exists: {existing_pr}"
 
-        update_response = requests.put(file_api_url, headers=headers, json=update_payload)
-        update_response.raise_for_status()
+    # ✅ Create pull request with the correct base branch
+    pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+    pr_payload = {
+        "title": f"Fix: {commit_message}",
+        "body": "This PR contains a fix for the identified issue.",
+        "head": branch,
+        "base": base_branch  # ✅ Use the dynamically fetched default branch
+    }
 
-        return f"File {file_path} updated successfully with commit: {commit_message}"
-    except requests.RequestException as e:
-        logging.error(f"GitHub API Error: {str(e)}")
-        return f"Error updating file: {str(e)}"
+    pr_response = requests.post(pr_url, headers=headers, json=pr_payload)
+
+    if pr_response.status_code == 422:
+        logging.error(f"GitHub API PR creation failed: {pr_response.json()}")
+        raise ValueError(f"GitHub PR creation failed: {pr_response.json()}")
+
+    pr_response.raise_for_status()
+    return f"Pull request created: {pr_response.json().get('html_url')}"
+
 
 # -------------------------
-# ✅ Sentry CrewAI Fixer Class (Optimized with Scoring Agent)
+# ✅ Sentry CrewAI Fixer Class (Stronger Agent for Issue Resolution)
 # -------------------------
 
 class SentryCrewFixer:
-    """Handles automated error diagnosis, fixing, and scoring for FastAPI + Sentry applications."""
+    """Handles automated error diagnosis and fixing for FastAPI + Sentry applications."""
 
     def __init__(self):
         self.github_token = os.getenv("GITHUB_PAT")
@@ -139,60 +172,87 @@ class SentryCrewFixer:
         return config
 
     def create_agents(self):
-        """Creates CrewAI agents for error analysis, fixing, and scoring."""
+        """Creates a CrewAI agent for robust error analysis and fixing."""
         return [
             Agent(
-                role="Code Analyzer and Fixer",
-                goal="Identify, analyze and remediate critical FastAPI application vulnerabilities with a focus on error handling, monitoring, and performance optimization while ensuring production stability and security best practices",
-                backstory="Senior backend architect with 10+ years of experience in distributed systems and error handling. Specializes in FastAPI ecosystem optimization, Sentry integration, and implementing robust error monitoring solutions. Has successfully debugged and fixed critical production issues across high-traffic applications.",
+                role="Advanced Error Diagnoser and Fixer",
+                goal="Deeply analyze FastAPI errors, pinpoint the root cause, and implement a full fix.",
+                backstory="Senior AI-powered software engineer with a decade of experience in Python debugging, backend optimization, and error handling. Specializes in critical bug fixing, ensuring system reliability, and preventing regression errors.",
                 verbose=True,
                 llm="gemini/gemini-2.0-flash"
-            ),
-            Agent(
-                role="Performance Impact Evaluator",
-                goal="Quantitatively assess code fixes impact on system reliability, performance, and security while providing detailed severity scores and improvement metrics based on industry standards",
-                backstory="Former SRE lead at major tech companies with deep expertise in performance monitoring, error tracking, and reliability engineering. Created scoring frameworks used by Fortune 500 companies to evaluate system health and code quality. Expert in translating technical metrics into business impact assessments.",
-                verbose=True,
-                llm="gemini/gemini-2.0-flash"
-            ),
+            )
         ]
 
     def fix_error(self, request_data: Dict):
-        """Executes CrewAI workflow to diagnose, fix, and score an error."""
+        """Executes CrewAI workflow to diagnose and fix an error."""
         try:
             agents = self.create_agents()
             tasks = [
                 Task(
-                    description=f"Analyze and fix error {request_data['error_id']} in {request_data['error_location']['file']}.",
-                    expected_output="A detailed analysis and fix for the error in the FastAPI code.",
+                    description=(
+                        f"Analyze and fix the issue in {request_data['error_location']['file']}.\n"
+                        f"Error details: {request_data['error_title']} - {request_data['error_message']}.\n"
+                        "Steps:\n"
+                        "1. Identify the exact root cause in the given file.\n"
+                        "2. Ensure the issue is fully fixed.\n"
+                        "3. Return only the corrected code.\n"
+                        "4. The fix should be robust, tested, and should prevent similar errors."
+                    ),
+                    expected_output="Only return the corrected code, ensuring the issue is resolved completely.",
                     agent=agents[0]
-                ),
-                Task(
-                    description=f"Score the final fix for error {request_data['error_id']} based on severity.",
-                    expected_output="A score (1-100) indicating how well the fix addresses the issue.",
-                    agent=agents[1]
-                ),
+                )
             ]
 
             crew = Crew(agents=agents, tasks=tasks, verbose=True)
-            return crew.kickoff()
+            crew_output = crew.kickoff()
+            
+            # Extract results from CrewOutput
+            results = list(crew_output)  # Convert CrewOutput to a list
+
+            if len(results) < 1:
+                raise ValueError("CrewAI output is missing expected results.")
+
+            # ✅ Ensure `fixed_code` is a string and not a tuple
+            fixed_code = results[0]
+            if isinstance(fixed_code, tuple):
+                fixed_code = fixed_code[0]  # Extract first element if it's a tuple
+            fixed_code = str(fixed_code)  # Convert to string just in case
+
+
+            # ✅ Auto-generate the repository URL using error_id
+            repo_owner = "M-E-U-E"
+            repo_name = "Sentry_FastAPI"
+            repo_base_url = f"https://github.com/{repo_owner}/{repo_name}"
+            error_id = request_data.get("error_id")
+
+            if not error_id:
+                raise ValueError("Request data must include an 'error_id'.")
+
+            file_path = request_data["error_location"].get("file")
+
+            if not file_path:
+                raise ValueError("Error location must include a 'file' key.")
+
+            # ✅ Push the fixed code to GitHub on the dynamically generated branch
+            commit_message = f"Fix: {request_data['error_title']}"
+            branch_name = error_id  # Use error_id as the branch name
+
+            pr_url = push_updated_code(repo_base_url, file_path, fixed_code, commit_message, branch_name)
+            return {"status": "success", "pull_request": pr_url}
+
         except Exception as e:
             logging.error(f"Error in fix_error: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------
-# ✅ FastAPI Endpoint (Fixed with Scoring)
+# ✅ FastAPI Endpoint
 # -------------------------
 
 @app.post("/crew-ai/fix-error")
 async def fix_sentry_error(request: ErrorFixRequest):
-    """API endpoint to analyze, fix, and score Sentry-reported errors."""
+    """API endpoint to analyze and fix Sentry-reported errors."""
     fixer = SentryCrewFixer()
-    return {"status": "success", "fix_result": fixer.fix_error(request.model_dump())}
-
-# -------------------------
-# ✅ Start FastAPI
-# -------------------------
+    return fixer.fix_error(request.model_dump())
 
 if __name__ == "__main__":
     import uvicorn
