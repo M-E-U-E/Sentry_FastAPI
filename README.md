@@ -149,11 +149,22 @@ pip install -r requirements.txt
 ```bash
 uvicorn main:app
 ```
+The server will start at http://127.0.0.1:8000
 
+Access the Api endpoints
+http://127.0.0.1:8000/docs
 
-The server will start at `http://127.0.0.1:8000`
+### 5. Run to fix the code and push the code to the github dynamically
 
-### 5. Run the Gradio
+```bash
+python crew_ai_fixer.py
+```
+The server will start at http://127.0.0.1:8001
+
+Access the Api endpoints
+http://127.0.0.1:8001/docs
+
+### 6. Run the Gradio
 ```bash
 python interface.py
 ```
