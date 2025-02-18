@@ -106,12 +106,21 @@ def get_latest_branch_commit(owner, repo, branch):
     return response.json()["object"]["sha"]
 
 def create_new_branch(owner, repo, branch):
-    """Creates a new branch from the latest main branch commit."""
-    base_branch = "main"
-    latest_commit = get_latest_branch_commit(owner, repo, base_branch)
+    """Creates a new branch from the latest commit of the default branch."""
+    # First, get the default branch name
+    default_branch = get_default_branch(owner, repo)
+    logging.info(f"Using default branch '{default_branch}' for {repo}")
+    
+    # Get the latest commit from the default branch
+    latest_commit = get_latest_branch_commit(owner, repo, default_branch)
 
     if latest_commit is None:
-        raise ValueError(f"Base branch '{base_branch}' does not exist in {repo}.")
+        # Try 'master' if default branch lookup failed or returned none
+        logging.warning(f"Default branch '{default_branch}' not found. Trying 'master' branch.")
+        latest_commit = get_latest_branch_commit(owner, repo, "master")
+        
+        if latest_commit is None:
+            raise ValueError(f"Could not find a valid base branch in {repo}. Checked '{default_branch}' and 'master'.")
 
     headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
     branch_url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
@@ -140,11 +149,21 @@ def push_updated_code(repo_base_url, file_path, new_content, commit_message, bra
     owner, repo = parts[-2], parts[-1]
     headers = {"Authorization": f"token {os.getenv('GITHUB_PAT')}"}
 
-    base_branch = get_default_branch(owner, repo)
-    logging.info(f"Default branch of {repo}: {base_branch}")
+    # Get the default branch - more robust approach
+    try:
+        base_branch = get_default_branch(owner, repo)
+        logging.info(f"Default branch of {repo}: {base_branch}")
+    except Exception as e:
+        logging.warning(f"Error getting default branch: {str(e)}. Falling back to 'master'.")
+        base_branch = "master"
 
-    if get_latest_branch_commit(owner, repo, branch) is None:
-        create_new_branch(owner, repo, branch)
+    # Try to get the latest commit - if branch exists, if not create it
+    try:
+        if get_latest_branch_commit(owner, repo, branch) is None:
+            create_new_branch(owner, repo, branch)
+    except Exception as e:
+        logging.error(f"Error creating branch: {str(e)}")
+        raise
 
     # Get the file content from the specified branch
     file_api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={branch}"
@@ -155,11 +174,14 @@ def push_updated_code(repo_base_url, file_path, new_content, commit_message, bra
         logging.info(f"File '{file_path}' not found in branch '{branch}', trying base branch '{base_branch}'")
         base_file_api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={base_branch}"
         base_response = requests.get(base_file_api_url, headers=headers)
+        
         if base_response.status_code == 404:
-            raise ValueError(f"File '{file_path}' not found in branch '{branch}' or base branch '{base_branch}'.")
-        base_response.raise_for_status()
-        file_data = base_response.json()
-        file_sha = None  # No SHA needed for new file in the branch
+            # If file doesn't exist in base branch either, we'll create a new file
+            file_sha = None
+        else:
+            base_response.raise_for_status()
+            file_data = base_response.json()
+            file_sha = None  # No SHA needed for new file in the branch
     else:
         response.raise_for_status()
         file_data = response.json()
@@ -279,15 +301,27 @@ class SentryCrewFixer:
             if len(results) < 1:
                 raise ValueError("CrewAI output is missing expected results.")
 
+            # Extract the fixed code from the agent's output
             fixed_code = results[0]
             if isinstance(fixed_code, tuple):
                 fixed_code = fixed_code[0]
             fixed_code = str(fixed_code)
 
+            # Check if the output contains the "Final Answer:" marker
+            if "Final Answer:" in fixed_code:
+                # Extract only the code part after "Final Answer:"
+                code_start = fixed_code.find("Final Answer:") + len("Final Answer:")
+                fixed_code = fixed_code[code_start:].strip()
+            
+            # Remove any markdown code block markers if present
+            fixed_code = re.sub(r'^```python\s*', '', fixed_code, flags=re.MULTILINE)
+            fixed_code = re.sub(r'^```\s*$', '', fixed_code, flags=re.MULTILINE)
+            
             # Push the fixed code and create PR
             commit_message = f"Fix: {request_data['error_title']}"
-            branch_name = error_id
+            branch_name = f"fix-{error_id}"  # Adding 'fix-' prefix to make branch name more descriptive
             pr_url = push_updated_code(repo_base_url, file_path, fixed_code, commit_message, branch_name)
+            
             return {"status": "success", "pull_request": pr_url}
 
         except Exception as e:
