@@ -600,11 +600,7 @@ async def clear_index(
 
 @app.get("/sentry-debug", tags=["Sentry"])
 async def trigger_error():
-    try:
-        division_by_zero = 1 / 0  # Intentional error
-    except ZeroDivisionError as e:
-        sentry_sdk.capture_exception(e)  # Send error to Sentry
-        raise HTTPException(status_code=400, detail="Division by zero is not allowed.")
+    division_by_zero = 1 / 0
 
 
 SENTRY_AUTH_TOKEN = os.getenv("SENTRY_AUTH_TOKEN")
