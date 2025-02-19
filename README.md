@@ -177,6 +177,12 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 https://documentation-using-ai-agent.readthedocs.io/en/latest/
 ```
 
+### 7. Unit Test
+
+To see the coverage run this command:
+```bash
+python -m pytest test_documentation_assistant.py --cov=main
+```
 ## API Usage
 
 ### Available Endpoints
