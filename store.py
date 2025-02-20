@@ -310,26 +310,29 @@ class SentryCrewFixer:
                     description=(
                         f"Analyze and fix the issue in the following code:\n\n{current_code}\n\n"
                         f"Error details: {request_data['error_title']} - {request_data['error_message']}.\n"
-                        "Instructions:\n"
-                        "1. Carefully analyze the provided Python code and the error details to identify the root cause of the problem.\n"
-                        "2. Implement a complete, robust, and thoroughly tested fix that addresses the root cause and prevents similar errors in the future.\n"
-                        "3. Return the **ENTIRE, FIXED Python code file as a RAW STRING** with your changes directly integrated.  Do NOT include any explanations, comments, markdown formatting, code blocks (e.g., ```python ... ```), or any other surrounding text.  Just the complete, runnable Python code.\n"
-                        "4. Ensure that your fix maintains all original imports, functionality, and code structure from the original code, unless those elements are directly related to the error.\n"
-                        "5. The code MUST be valid Python and ready to be executed immediately.\n"
+                        "Steps:\n"
+                        "1. Identify the exact root cause in the given file.\n"
+                        "2. Implement a complete fix that addresses the issue.\n"
+                        "3. Return the ENTIRE fixed file with your changes integrated - not just a snippet.\n"
+                        "4. The fix should be robust, tested, and should prevent similar errors.\n"
+                        "5. Make sure to maintain all imports and functionality from the original code.\n"
+                        "6. Output your final code inside a Python code block. (e.g. ```python ... ```)"
                     ),
-                    expected_output="The complete, fixed Python code file as a raw string, with no additional formatting or explanations.",
+                    expected_output="Return the complete fixed code file with your changes properly integrated.",
                     agent=agents[0]
                 )
             ]
             crew = Crew(agents=agents, tasks=tasks, verbose=True)
-            crew_output = crew.kickoff() #crew_output is a string
-            # results = list(crew_output) # results is not a list of output and causes an issue
-            fixed_code = crew_output #crew_output is the string result
+            crew_output = crew.kickoff()
+            results = list(crew_output)
+
+            if len(results) < 1:
+                raise ValueError("CrewAI output is missing expected results.")
 
             # 3. Extract the agent's raw output
-            # fixed_code = results
-            # if isinstance(fixed_code, tuple): # crew_output is not a tuple
-            #     fixed_code = fixed_code[0]
+            fixed_code = results
+            if isinstance(fixed_code, tuple):
+                fixed_code = fixed_code[0]
             fixed_code = str(fixed_code)
 
             # 4. Log the raw output for debugging

@@ -1,31 +1,44 @@
-# Python bytecode files
-*.pyc
-*.pyo
-__pycache__/
-.gradio/
+# Python bytecode files  
+*.pyc  
+*.pyo  
+__pycache__/  
 
-# Virtual environment folder (change 'venv' to your specific env folder name)
-venv/
-env/
-.venv/
+# Gradio cache  
+.gradio/  
 
-# Uvicorn logs
-*.log
+# Virtual environment folders  
+venv/  
+env/  
+.venv/  
 
-# IDE and editor folders
-.vscode/
-.idea/
+# Logs  
+*.log  
 
-# Environment variables or sensitive data (e.g., .env files)
-.env
+# IDE and editor folders  
+.vscode/  
+.idea/  
 
-# Python package manager files (if using pipenv or poetry, include their folders as well)
-Pipfile
-Pipfile.lock
-poetry.lock
+# Environment variables or sensitive data  
+.env  
 
-# Other system-specific files
-.DS_Store
-Thumbs.db
-documentation_content.json
-relevant_docs.json
+# Python package manager files  
+Pipfile  
+Pipfile.lock  
+poetry.lock  
+
+# Other system-specific files  
+.DS_Store  
+Thumbs.db  
+
+# Documentation and generated JSON files  
+documentation_content.json  
+relevant_docs.json  
+
+# Coverage reports  
+.coverage  
+
+# Agent outputs directory  
+agent_outputs/  
+
+# Ignore vector IDs JSON file  
+vector_ids.json 
