@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import logging
@@ -600,7 +601,11 @@ async def clear_index(
 
 @app.get("/sentry-debug", tags=["Sentry"])
 async def trigger_error():
-    division_by_zero = 1 / 0
+    try:
+        division_by_zero = 1 / 0
+    except ZeroDivisionError as e:
+        sentry_sdk.capture_exception(e)
+        raise HTTPException(status_code=500, detail="Division by zero error")
 
 
 SENTRY_AUTH_TOKEN = os.getenv("SENTRY_AUTH_TOKEN")
@@ -827,19 +832,4 @@ async def get_error_details(issue_id: str):
     # Fetch error details from Sentry API
     error_details = sentry_api.get_full_error_details(issue_id)
     
-    # If issue does not exist, return 404
-    if not error_details.get("error_type"):
-        return {"status": "error", "message": f"Issue {issue_id} not found in Sentry"}
-    
-    # Format the response similar to `/get-sentry-issues`
-    formatted_issue = {
-        "id": issue_id,
-        "title": error_details.get("error_message", "No title available"),
-        "permalink": f"https://sentry.io/organizations/{ORG_SLUG}/issues/{issue_id}/",
-        "error_type": error_details["error_type"],
-        "error_message": error_details["error_message"],
-        "error_location": error_details["error_location"],
-        "timestamp": error_details["timestamp"]
-    }
-
-    return {"status": "success", "issue": formatted_issue}
+    # If issue does not
