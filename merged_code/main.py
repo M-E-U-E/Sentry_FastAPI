@@ -849,7 +849,6 @@ async def get_error_details(issue_id: str):
 async def trigger_error():
     try:
         division_by_zero = 1 / 0
-    except ZeroDivisionError as e:
-        sentry_sdk.capture_exception(e)
-        raise HTTPException(status_code=500, detail="Division by zero error") from e
+    except ZeroDivisionError:
+        return {"message": "Cannot divide by zero!"}
 ```
