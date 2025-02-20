@@ -603,8 +603,8 @@ async def clear_index(
 async def trigger_error():
     try:
         division_by_zero = 1 / 0
-    except ZeroDivisionError:
-        return {"message": "Handled division by zero error"}
+    except ZeroDivisionError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 SENTRY_AUTH_TOKEN = os.getenv("SENTRY_AUTH_TOKEN")
@@ -833,4 +833,4 @@ async def get_error_details(issue_id: str):
     
     # If issue does not exist, return 404
     if not error_details.get("error_type"):
-        return {"status": "error", "message": f"Issue {issue_id} not
+        return {"status": "error", "message": f"Issue {issue_id} not found in S
