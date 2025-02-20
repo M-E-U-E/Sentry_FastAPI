@@ -601,11 +601,11 @@ async def clear_index(
 
 @app.get("/sentry-debug", tags=["Sentry"])
 async def trigger_error():
+    #division_by_zero = 1 / 0
     try:
         division_by_zero = 1 / 0
-    except ZeroDivisionError as e:
-        sentry_sdk.capture_exception(e)
-        raise HTTPException(status_code=500, detail="Division by zero error")
+    except ZeroDivisionError:
+        return {"message": "Handled ZeroDivisionError"}
 
 
 SENTRY_AUTH_TOKEN = os.getenv("SENTRY_AUTH_TOKEN")
@@ -832,4 +832,6 @@ async def get_error_details(issue_id: str):
     # Fetch error details from Sentry API
     error_details = sentry_api.get_full_error_details(issue_id)
     
-    # If issue does not
+    # If issue does not exist, return 404
+    if not error_details.get("error_type"):
+        return {"status": "error", "message": f"Issue {issue_
